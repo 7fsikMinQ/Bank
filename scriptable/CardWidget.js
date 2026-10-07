@@ -12,13 +12,19 @@ async function load(now) {
   const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
   if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
   const items = []; let failed = 0;
-  for (const name of fm.listContents(dir).filter(n => pres.some(pr => n.startsWith(pr)) && n.endsWith(".txt"))) {
+  const okMonths = new Set([ym, core.prevYm(ym)]);
+  for (const name of fm.listContents(dir).filter(n => n.endsWith(".txt"))) {
     try {
       const p = fm.joinPath(dir, name);
+      let mtime = "";
+      try { const d = fm.modificationDate(p) || fm.creationDate(p); mtime = d ? d.toISOString() : ""; } catch (e) {}
+      // 날짜로 시작하는 파일명(yyyyMM…)은 이름으로, 그 외(간단 모드 "Text 3.txt" 등)는 수정시각으로 이번 달/전달만 읽는다
+      const byName = /^\d{6}/.test(name) ? pres.some(pr => name.startsWith(pr)) : (mtime ? okMonths.has(core.monthInfo(mtime).ym) : true);
+      if (!byName) continue;
       if (!fm.isFileDownloaded(p)) await fm.downloadFileFromiCloud(p);
       const text = fm.readString(p);
       if (text.length > 5000) { failed++; continue; } // 비정상적으로 큰 파일은 무시
-      items.push({ name, text });
+      items.push({ name, text, mtime });
     } catch (e) { failed++; }
   }
   return { items, failed };

@@ -28,14 +28,24 @@ function nextTarget(card, v) {
   return card.tiers.find(t => v < t) ?? card.tiers[card.tiers.length - 1];
 }
 
-// 입력: {name,text} 또는 문자열. 파일 형식: 1행 발신자 / 2행 ISO일시 / 3행~ 본문
+// 입력: {name,text,mtime} 또는 문자열.
+//  (A) 헤더 모드: 1행 태그 / 2행 ISO일시 / 3행~ 본문  (단축어 동작 6개짜리 방식)
+//  (B) 간단 모드: 파일 전체가 문자 원문. 시각은 파일명(yyyyMMdd-HHmmss)이 있으면 그것, 없으면 파일 수정시각(mtime)  (동작 2개짜리 방식)
+const TAG_LINE = /^(?:비씨|BC|우리카드|현대카드|신한|우리|현대)$/;
 function parseFile(item) {
   const text = typeof item === "string" ? item : item.text;
   const name = typeof item === "string" ? "" : item.name || "";
+  const mtime = typeof item === "string" ? "" : item.mtime || "";
   const lines = text.split(/\r?\n/);
-  let iso = normalizeIso(lines[1] || "");
-  if (!iso || isNaN(new Date(iso))) iso = isoFromName(name); // 2행이 비정상이면 파일명으로 복구
-  return { sender: (lines[0] || "").slice(0, 60), iso, body: lines.slice(2).join("\n").slice(0, MAX_BODY) };
+  const headerDate = normalizeIso(lines[1] || "");
+  const isHeader = lines.length >= 3 && (TAG_LINE.test((lines[0] || "").trim()) || (headerDate && !isNaN(new Date(headerDate))));
+  if (isHeader) {
+    let iso = headerDate;
+    if (!iso || isNaN(new Date(iso))) iso = isoFromName(name) || normalizeIso(mtime); // 2행이 비정상이면 파일명→수정시각으로 복구
+    return { sender: (lines[0] || "").slice(0, 60), iso, body: lines.slice(2).join("\n").slice(0, MAX_BODY) };
+  }
+  const iso = isoFromName(name) || normalizeIso(mtime);
+  return { sender: "", iso, body: text.slice(0, MAX_BODY) };
 }
 
 // 파일명 yyyyMMdd-HHmmss(-난수).txt 는 기기 로컬(KST) 시각

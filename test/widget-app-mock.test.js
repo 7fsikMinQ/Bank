@@ -4,6 +4,8 @@ const { run } = require("./helpers/scriptable-mock");
   const { rows, diag } = await run({ runsInWidget: false });
   if (!diag.length || !diag.some(d => d.includes("OK BC바로KPASS +350,000원"))) { console.error("APP MOCK FAIL diag", diag); process.exit(1); }
   console.log(diag.slice(0, 4).join("\n"));
+  const sm = await run({ runsInWidget: false, simple: true });
+  if (!sm.diag.some(d => d.includes("OK BC바로KPASS +1,000원")) || !sm.diag.some(d => d.includes("OK 현대ED3 +5,000원"))) { console.error("APP MOCK FAIL simple-mode files", sm.diag); process.exit(1); }
   const empty = await run({ runsInWidget: false, withFiles: false });
   if (empty.rows.join("|").includes("오류") && !empty.rows.join("|").includes("카드실적")) { console.error("APP MOCK FAIL empty"); process.exit(1); }
   console.log("APP MOCK OK");
