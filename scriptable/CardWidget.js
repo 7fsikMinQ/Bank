@@ -6,11 +6,13 @@ const root = fm.joinPath(fm.documentsDirectory(), "CardLedger");
 const dir = fm.joinPath(root, "inbox");
 
 async function load(now) {
-  // 이번 달 prefix(yyyyMM, 기기 로컬=KST) 파일만 읽어 iCloud 다운로드/속도 부담을 줄인다
-  const pre = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // 이번 달(KST 기준)과 전달 prefix(yyyyMM) 파일만 읽어 iCloud 부담을 줄인다.
+  // 파일명은 폰 현지 시각이라, 폰 시간대가 한국이 아니어도 월 경계 파일을 놓치지 않도록 전달까지 읽는다(월 분리는 코어가 KST로 정확히 수행).
+  const ym = core.monthInfo(now.toISOString()).ym;
+  const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
   if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
   const items = []; let failed = 0;
-  for (const name of fm.listContents(dir).filter(n => n.startsWith(pre) && n.endsWith(".txt"))) {
+  for (const name of fm.listContents(dir).filter(n => pres.some(pr => n.startsWith(pr)) && n.endsWith(".txt"))) {
     try {
       const p = fm.joinPath(dir, name);
       if (!fm.isFileDownloaded(p)) await fm.downloadFileFromiCloud(p);
@@ -58,12 +60,12 @@ try {
   const now = new Date();
   const { items, failed } = await load(now);
   const res = core.aggregate(items, now.toISOString(), loadAdjust());
-  const { sum, cum, unparsed } = res;
+  const { sum, cum, unparsed, info } = res;
   var diagRows = res.rows;
   const warn = unparsed + failed;
   // 앱에서 직접 실행하면(위젯 아님) 진단표를 먼저 보여준다: 어떤 문자가 어떻게 읽혔는지 확인용
   if (!config.runsInWidget) await showDiag(core.CARDS, diagRows);
-  const title = w.addText(`${now.getMonth() + 1}월 카드실적` + (warn ? `  ⚠︎${warn}` : ""));
+  const title = w.addText(`${info.month}월 1~${info.days}일 카드실적` + (warn ? `  ⚠︎${warn}` : ""));
   title.font = Font.boldSystemFont(12); title.textColor = Color.gray();
   w.addSpacer(4);
   for (const c of core.CARDS) {
@@ -77,7 +79,7 @@ try {
     t.textColor = ok ? Color.green() : Color.red();
     w.addSpacer(2);
   }
-  const foot = w.addText(`갱신 ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`);
+  const foot = w.addText(`${info.day}/${info.days}일차 · 갱신 ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`);
   foot.font = Font.systemFont(9); foot.textColor = Color.gray();
 } catch (e) {
   const t = w.addText("오류: " + e.message); t.font = Font.systemFont(11); t.textColor = Color.red();

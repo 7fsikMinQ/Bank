@@ -33,7 +33,7 @@ function parseFile(item) {
   const text = typeof item === "string" ? item : item.text;
   const name = typeof item === "string" ? "" : item.name || "";
   const lines = text.split(/\r?\n/);
-  let iso = lines[1] || "";
+  let iso = normalizeIso(lines[1] || "");
   if (!iso || isNaN(new Date(iso))) iso = isoFromName(name); // 2행이 비정상이면 파일명으로 복구
   return { sender: (lines[0] || "").slice(0, 60), iso, body: lines.slice(2).join("\n").slice(0, MAX_BODY) };
 }
@@ -66,23 +66,42 @@ function classify(rec) {
   return { status: "ok", card, amt };
 }
 
+// ── 날짜 규칙 ─────────────────────────────────────────────────────────────
+// 한 달 = 한국시간(KST, +09:00, 서머타임 없음) 기준 "1일 00:00:00 ~ 말일 23:59:59".
+// 말일은 월마다 28/29/30/31일이며 윤년(4의 배수, 단 100의 배수는 제외하되 400의 배수는 포함)의 2월은 29일.
+// 시간대 표시가 없는 시각("2026-10-31T23:59:59")은 한국시간으로 해석해 폰의 시간대 설정에 영향받지 않게 한다.
+function normalizeIso(iso) {
+  const t = String(iso || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(t)) return t.replace(" ", "T") + "+09:00";
+  return t;
+}
+function validDate(iso) { return !isNaN(new Date(normalizeIso(iso))); }
 // KST 기준 "YYYY-MM"
 function ymKST(iso) {
-  const k = new Date(new Date(iso).getTime() + 9 * 3600 * 1000);
+  const k = new Date(new Date(normalizeIso(iso)).getTime() + 9 * 3600 * 1000);
   return k.toISOString().slice(0, 7);
+}
+function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); } // month: 1~12
+function prevYm(ym) { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; }
+// 위젯 표시용: 이번 달 범위와 오늘이 며칠째인지
+function monthInfo(nowIso) {
+  const ym = ymKST(nowIso), [year, month] = ym.split("-").map(Number);
+  const k = new Date(new Date(normalizeIso(nowIso)).getTime() + 9 * 3600 * 1000);
+  return { ym, year, month, days: daysInMonth(year, month), day: k.getUTCDate() };
 }
 
 // adjust: {카드id: 원} 수동 보정(누락 문자 등). dedupe: 같은 발신자+본문+같은 분(分)은 1건
 function aggregate(items, nowIso, adjust = {}) {
-  const ym = ymKST(nowIso);
+  const info = monthInfo(nowIso), ym = info.ym;
   const sum = Object.fromEntries(CARDS.map(c => [c.id, 0]));
   const cum = {}, cumAt = {}, lastSeen = new Map(), rows = [];
   let unparsed = 0, dup = 0;
-  const recs = items.map(parseFile).sort((a, b) => (a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0));
+  const recs = items.map(parseFile).map(r => ({ ...r, ts: validDate(r.iso) ? new Date(r.iso).getTime() : NaN }))
+    .sort((a, b) => (isNaN(a.ts) ? -1 : isNaN(b.ts) ? 1 : a.ts - b.ts)); // 실제 시각 순(문자열 비교 금지: Z/+09:00 혼재)
   for (const rec of recs) {
-    if (!rec.iso || isNaN(new Date(rec.iso))) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
+    if (!rec.iso || !validDate(rec.iso)) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
     if (ymKST(rec.iso) !== ym) continue;
-    const key = rec.body.trim(), t = new Date(rec.iso).getTime();
+    const key = rec.body.trim(), t = rec.ts;
     if (lastSeen.has(key) && t - lastSeen.get(key) < 60000) { dup++; rows.push({ rec, status: "dup" }); continue; }
     lastSeen.set(key, t);
     const r = classify(rec);
@@ -90,14 +109,14 @@ function aggregate(items, nowIso, adjust = {}) {
     if (r.status === "ok") {
       sum[r.card.id] += r.amt;
       const cm = CUMUL.exec(rec.body);
-      if (cm && (!cumAt[r.card.id] || rec.iso > cumAt[r.card.id])) {
-        cumAt[r.card.id] = rec.iso; cum[r.card.id] = parseInt(cm[1].replace(/,/g, ""), 10);
+      if (cm && (cumAt[r.card.id] === undefined || rec.ts >= cumAt[r.card.id])) {
+        cumAt[r.card.id] = rec.ts; cum[r.card.id] = parseInt(cm[1].replace(/,/g, ""), 10);
       }
     } else if (r.status === "noamount" || r.status === "ambiguous") unparsed++;
   }
   for (const [id, v] of Object.entries(adjust || {}))
     if (id in sum && typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_ADJUST) sum[id] += v;
-  return { ym, sum, cum, unparsed, dup, rows };
+  return { ym, info, sum, cum, unparsed, dup, rows };
 }
 
-if (typeof module !== "undefined") module.exports = { CARDS, nextTarget, aggregate, classify, parseFile, ymKST, isoFromName };
+if (typeof module !== "undefined") module.exports = { CARDS, nextTarget, normalizeIso, daysInMonth, prevYm, monthInfo, aggregate, classify, parseFile, ymKST, isoFromName };

@@ -33,7 +33,7 @@ function parseFile(item) {
   const text = typeof item === "string" ? item : item.text;
   const name = typeof item === "string" ? "" : item.name || "";
   const lines = text.split(/\r?\n/);
-  let iso = lines[1] || "";
+  let iso = normalizeIso(lines[1] || "");
   if (!iso || isNaN(new Date(iso))) iso = isoFromName(name); // 2행이 비정상이면 파일명으로 복구
   return { sender: (lines[0] || "").slice(0, 60), iso, body: lines.slice(2).join("\n").slice(0, MAX_BODY) };
 }
@@ -66,23 +66,42 @@ function classify(rec) {
   return { status: "ok", card, amt };
 }
 
+// ── 날짜 규칙 ─────────────────────────────────────────────────────────────
+// 한 달 = 한국시간(KST, +09:00, 서머타임 없음) 기준 "1일 00:00:00 ~ 말일 23:59:59".
+// 말일은 월마다 28/29/30/31일이며 윤년(4의 배수, 단 100의 배수는 제외하되 400의 배수는 포함)의 2월은 29일.
+// 시간대 표시가 없는 시각("2026-10-31T23:59:59")은 한국시간으로 해석해 폰의 시간대 설정에 영향받지 않게 한다.
+function normalizeIso(iso) {
+  const t = String(iso || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(t)) return t.replace(" ", "T") + "+09:00";
+  return t;
+}
+function validDate(iso) { return !isNaN(new Date(normalizeIso(iso))); }
 // KST 기준 "YYYY-MM"
 function ymKST(iso) {
-  const k = new Date(new Date(iso).getTime() + 9 * 3600 * 1000);
+  const k = new Date(new Date(normalizeIso(iso)).getTime() + 9 * 3600 * 1000);
   return k.toISOString().slice(0, 7);
+}
+function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); } // month: 1~12
+function prevYm(ym) { const [y, m] = ym.split("-").map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`; }
+// 위젯 표시용: 이번 달 범위와 오늘이 며칠째인지
+function monthInfo(nowIso) {
+  const ym = ymKST(nowIso), [year, month] = ym.split("-").map(Number);
+  const k = new Date(new Date(normalizeIso(nowIso)).getTime() + 9 * 3600 * 1000);
+  return { ym, year, month, days: daysInMonth(year, month), day: k.getUTCDate() };
 }
 
 // adjust: {카드id: 원} 수동 보정(누락 문자 등). dedupe: 같은 발신자+본문+같은 분(分)은 1건
 function aggregate(items, nowIso, adjust = {}) {
-  const ym = ymKST(nowIso);
+  const info = monthInfo(nowIso), ym = info.ym;
   const sum = Object.fromEntries(CARDS.map(c => [c.id, 0]));
   const cum = {}, cumAt = {}, lastSeen = new Map(), rows = [];
   let unparsed = 0, dup = 0;
-  const recs = items.map(parseFile).sort((a, b) => (a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0));
+  const recs = items.map(parseFile).map(r => ({ ...r, ts: validDate(r.iso) ? new Date(r.iso).getTime() : NaN }))
+    .sort((a, b) => (isNaN(a.ts) ? -1 : isNaN(b.ts) ? 1 : a.ts - b.ts)); // 실제 시각 순(문자열 비교 금지: Z/+09:00 혼재)
   for (const rec of recs) {
-    if (!rec.iso || isNaN(new Date(rec.iso))) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
+    if (!rec.iso || !validDate(rec.iso)) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
     if (ymKST(rec.iso) !== ym) continue;
-    const key = rec.body.trim(), t = new Date(rec.iso).getTime();
+    const key = rec.body.trim(), t = rec.ts;
     if (lastSeen.has(key) && t - lastSeen.get(key) < 60000) { dup++; rows.push({ rec, status: "dup" }); continue; }
     lastSeen.set(key, t);
     const r = classify(rec);
@@ -90,28 +109,30 @@ function aggregate(items, nowIso, adjust = {}) {
     if (r.status === "ok") {
       sum[r.card.id] += r.amt;
       const cm = CUMUL.exec(rec.body);
-      if (cm && (!cumAt[r.card.id] || rec.iso > cumAt[r.card.id])) {
-        cumAt[r.card.id] = rec.iso; cum[r.card.id] = parseInt(cm[1].replace(/,/g, ""), 10);
+      if (cm && (cumAt[r.card.id] === undefined || rec.ts >= cumAt[r.card.id])) {
+        cumAt[r.card.id] = rec.ts; cum[r.card.id] = parseInt(cm[1].replace(/,/g, ""), 10);
       }
     } else if (r.status === "noamount" || r.status === "ambiguous") unparsed++;
   }
   for (const [id, v] of Object.entries(adjust || {}))
     if (id in sum && typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_ADJUST) sum[id] += v;
-  return { ym, sum, cum, unparsed, dup, rows };
+  return { ym, info, sum, cum, unparsed, dup, rows };
 }
 
 
-const core = { CARDS, nextTarget, aggregate };
+const core = { CARDS, nextTarget, aggregate, monthInfo, prevYm };
 const fm = FileManager.iCloud();
 const root = fm.joinPath(fm.documentsDirectory(), "CardLedger");
 const dir = fm.joinPath(root, "inbox");
 
 async function load(now) {
-  // 이번 달 prefix(yyyyMM, 기기 로컬=KST) 파일만 읽어 iCloud 다운로드/속도 부담을 줄인다
-  const pre = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // 이번 달(KST 기준)과 전달 prefix(yyyyMM) 파일만 읽어 iCloud 부담을 줄인다.
+  // 파일명은 폰 현지 시각이라, 폰 시간대가 한국이 아니어도 월 경계 파일을 놓치지 않도록 전달까지 읽는다(월 분리는 코어가 KST로 정확히 수행).
+  const ym = core.monthInfo(now.toISOString()).ym;
+  const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
   if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
   const items = []; let failed = 0;
-  for (const name of fm.listContents(dir).filter(n => n.startsWith(pre) && n.endsWith(".txt"))) {
+  for (const name of fm.listContents(dir).filter(n => pres.some(pr => n.startsWith(pr)) && n.endsWith(".txt"))) {
     try {
       const p = fm.joinPath(dir, name);
       if (!fm.isFileDownloaded(p)) await fm.downloadFileFromiCloud(p);
@@ -159,12 +180,12 @@ try {
   const now = new Date();
   const { items, failed } = await load(now);
   const res = core.aggregate(items, now.toISOString(), loadAdjust());
-  const { sum, cum, unparsed } = res;
+  const { sum, cum, unparsed, info } = res;
   var diagRows = res.rows;
   const warn = unparsed + failed;
   // 앱에서 직접 실행하면(위젯 아님) 진단표를 먼저 보여준다: 어떤 문자가 어떻게 읽혔는지 확인용
   if (!config.runsInWidget) await showDiag(core.CARDS, diagRows);
-  const title = w.addText(`${now.getMonth() + 1}월 카드실적` + (warn ? `  ⚠︎${warn}` : ""));
+  const title = w.addText(`${info.month}월 1~${info.days}일 카드실적` + (warn ? `  ⚠︎${warn}` : ""));
   title.font = Font.boldSystemFont(12); title.textColor = Color.gray();
   w.addSpacer(4);
   for (const c of core.CARDS) {
@@ -178,7 +199,7 @@ try {
     t.textColor = ok ? Color.green() : Color.red();
     w.addSpacer(2);
   }
-  const foot = w.addText(`갱신 ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`);
+  const foot = w.addText(`${info.day}/${info.days}일차 · 갱신 ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`);
   foot.font = Font.systemFont(9); foot.textColor = Color.gray();
 } catch (e) {
   const t = w.addText("오류: " + e.message); t.font = Font.systemFont(11); t.textColor = Color.red();

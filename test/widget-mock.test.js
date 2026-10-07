@@ -22,6 +22,8 @@ const src = fs.readFileSync(path.join(__dirname, "../scriptable/CardWidget.singl
 new (Object.getPrototypeOf(async function () {}).constructor)(src)().then(() => {
   console.log(rows.join(" | "));
   const j = rows.join("|");
+  const dm = new Date(Date.now() + 9 * 3600e3), dd = new Date(Date.UTC(dm.getUTCFullYear(), dm.getUTCMonth() + 1, 0)).getUTCDate();
+  if (!j.includes(`${dm.getUTCMonth() + 1}월 1~${dd}일`) || !j.includes(`${dm.getUTCDate()}/${dd}일차`)) { console.error("MOCK FAIL month range/day-of-month label", j); process.exit(1); }
   if (!/35\/30만|35\/60만/.test(j) || !/8\/40만/.test(j) || !/1\.2\/30만/.test(j)) { console.error("MOCK FAIL"); process.exit(1); }
   console.log("WIDGET MOCK OK");
 });
