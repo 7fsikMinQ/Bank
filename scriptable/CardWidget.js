@@ -51,10 +51,10 @@ async function showDiag(cards, rows) {
 
 const man = v => (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1);
 const w = new ListWidget();
-w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
+// Color.dynamic 이 없는 버전이어도 죽지 않게 방어
+w.backgroundColor = typeof Color.dynamic === "function" ? Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e")) : new Color("#1c1c1e");
 w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000); // 요청값일 뿐, 실제 주기는 iOS가 결정
-w.url = "scriptable:///run/" + encodeURIComponent(Script.name()); // 탭 → 앱에서 재실행
-if (config.runsInApp && typeof Widget.reloadUserWidgets === "function") Widget.reloadUserWidgets();
+w.url = "scriptable:///run/" + encodeURIComponent(Script.name()); // 탭 → 앱에서 실행(최신 계산 결과 + 진단표)
 
 try {
   const now = new Date();
