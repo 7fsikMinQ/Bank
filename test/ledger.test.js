@@ -15,4 +15,15 @@ const files = [
 const r = aggregate(files, "2026-10-07T00:00:00Z");
 assert.deepStrictEqual(r.sum, { bc: 12000, hd: 40000, sh: 10000, wr: 7000 });
 assert.strictEqual(r.unparsed, 1);
+assert.strictEqual(r.cum.bc, undefined);
+const r2 = aggregate([
+  f("1588-4000", "2026-10-02T03:00:00Z", "[BC카드] 승인 12,000원 일시불 스타벅스 누적 12,000원"),
+  f("1588-4000", "2026-10-05T03:00:00Z", "[BC카드] 승인 8,000원 일시불 GS25 누적 20,000원"),
+], "2026-10-07T00:00:00Z");
+assert.strictEqual(r2.sum.bc, 20000); assert.strictEqual(r2.cum.bc, 20000);
+const { CARDS, nextTarget } = require("../scriptable/ledger-core.js");
+const bc = CARDS[0];
+assert.strictEqual(nextTarget(bc, 0), 300000);
+assert.strictEqual(nextTarget(bc, 300000), 600000);
+assert.strictEqual(nextTarget(bc, 700000), 600000);
 console.log("OK", r);
