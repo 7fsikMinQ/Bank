@@ -4,10 +4,12 @@
 // tiers: 혜택 구간(원, 오름차순). confirmed:false = 조사로 확인 못 한 임시값 → 위젯에 "?"
 // match 는 "발신번호 + 문자 앞부분(HEAD_LEN자)"에만 적용 → 가맹점명(현대백화점 등) 오분류 방지
 const CARDS = [
-  { id: "bc", name: "BC바로KPASS", match: /BC|비씨/,       tiers: [300000, 600000], confirmed: true,  exclude: [] },
-  { id: "hd", name: "현대ED3",     match: /현대카드/,      tiers: [400000],         confirmed: true,  exclude: [] },
-  { id: "sh", name: "신한",        match: /신한/,          tiers: [300000],         confirmed: false, exclude: [] },
-  { id: "wr", name: "우리다모아",  match: /우리카드|우리\s*\(?카드/, tiers: [300000], confirmed: false,
+  // BC 바로: 문자 머리말에 "비씨(또는 BC)"와 "신용"이 둘 다 있어야 한다 (순서·띄어쓰기 무관)
+  { id: "bc", name: "BC바로KPASS", match: /^(?=[\s\S]*(?:비씨|BC))(?=[\s\S]*신용)/, tiers: [300000, 600000], confirmed: true, exclude: [] },
+  { id: "hd", name: "현대ED3",     match: /현대카드/, tiers: [400000], confirmed: true, exclude: [] },
+  { id: "sh", name: "신한",        match: /신한/,     tiers: [300000], confirmed: false, exclude: [] },
+  // 우리다모아: "우리" 가 있거나, "비씨(BC) 체크" 로 표기되는 경우
+  { id: "wr", name: "우리다모아",  match: /우리|(?:비씨|BC)\s*체크/, tiers: [300000], confirmed: false,
     exclude: [/관리비|국세|지방세|공과금|상품권|선불|교통카드|충전/] },
 ];
 const HEAD_LEN = 30;
@@ -43,13 +45,15 @@ function isoFromName(name) {
 }
 
 function classify(rec) {
-  // 1순위: 단축어가 1행에 적어 준 카드 태그(예: "신한")가 카드 1개와 정확히 일치하면 그 카드
-  const tagHits = CARDS.filter(c => c.match.test(rec.sender));
-  const byTag = tagHits.length === 1 ? tagHits[0] : null;
-  // 2순위: 카드명은 "승인/취소/결제/이용" 키워드 앞(머리말)에서만 찾는다 → 뒤쪽 가맹점명 영향 차단
+  // 1순위: 본문 머리말("승인/취소/결제/이용" 앞)에서 카드 찾기 → 가맹점명(우리약국 등)에 속지 않음
   const cut = rec.body.search(/승인|취소|결제|이용/);
-  const head = rec.sender + "\n" + rec.body.slice(0, cut > 0 ? Math.min(cut, HEAD_LEN) : HEAD_LEN);
-  const hits = byTag ? [byTag] : CARDS.filter(c => c.match.test(head));
+  const head = rec.body.slice(0, cut > 0 ? Math.min(cut, HEAD_LEN) : HEAD_LEN);
+  let hits = CARDS.filter(c => c.match.test(head));
+  // 2순위: 머리말에 카드 표시가 전혀 없을 때만 단축어가 1행에 적은 태그를 참고
+  if (hits.length === 0) {
+    const tagHits = CARDS.filter(c => c.match.test(rec.sender));
+    if (tagHits.length === 1) hits = tagHits;
+  }
   if (hits.length === 0) return { status: "nocard" };
   if (hits.length > 1) return { status: "ambiguous" };
   const card = hits[0];
@@ -78,7 +82,7 @@ function aggregate(items, nowIso, adjust = {}) {
   for (const rec of recs) {
     if (!rec.iso || isNaN(new Date(rec.iso))) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
     if (ymKST(rec.iso) !== ym) continue;
-    const key = rec.sender + "|" + rec.body.trim(), t = new Date(rec.iso).getTime();
+    const key = rec.body.trim(), t = new Date(rec.iso).getTime();
     if (lastSeen.has(key) && t - lastSeen.get(key) < 60000) { dup++; rows.push({ rec, status: "dup" }); continue; }
     lastSeen.set(key, t);
     const r = classify(rec);

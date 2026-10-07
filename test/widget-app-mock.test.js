@@ -4,7 +4,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cl-")); const inbox = path.jo
 fs.mkdirSync(inbox, { recursive: true });
 const d = new Date(); const pre = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
 const iso = new Date().toISOString();
-fs.writeFileSync(path.join(inbox, `${pre}01-101010-1111.txt`), `1588-4000\n${iso}\n[BC카드] 승인 350,000원 일시불 누적 350,000원`);
+fs.writeFileSync(path.join(inbox, `${pre}01-101010-1111.txt`), `1588-4000\n${iso}\n비씨 신용 승인 350,000원 일시불 누적 350,000원`);
 fs.writeFileSync(path.join(inbox, `${pre}02-101010-2222.txt`), `1544-7000\n${iso}\n현대카드 승인 100,000원`);
 fs.writeFileSync(path.join(inbox, `${pre}02-101010-3333.txt`), `1544-7000\n${iso}\n현대카드 승인취소 20,000원`);
 fs.writeFileSync(path.join(tmp, "CardLedger/adjust.json"), '{"sh": 12000}');
