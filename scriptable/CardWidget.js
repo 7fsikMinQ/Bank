@@ -14,7 +14,9 @@ async function load(now) {
     try {
       const p = fm.joinPath(dir, name);
       if (!fm.isFileDownloaded(p)) await fm.downloadFileFromiCloud(p);
-      items.push({ name, text: fm.readString(p) });
+      const text = fm.readString(p);
+      if (text.length > 5000) { failed++; continue; } // 비정상적으로 큰 파일은 무시
+      items.push({ name, text });
     } catch (e) { failed++; }
   }
   return { items, failed };
@@ -30,6 +32,21 @@ function loadAdjust() {
   } catch (e) { return {}; }
 }
 
+async function showDiag(cards, rows) {
+  const t = new UITable(); t.showSeparators = true;
+  const head = new UITableRow(); head.isHeader = true;
+  head.addText("최근 문자 읽기 결과 (최신순, 30건)"); t.addRow(head);
+  const label = { ok: "OK", nocard: "카드 못 찾음", noamount: "금액 못 찾음", ambiguous: "카드 모호", excluded: "제외", dup: "중복", baddate: "날짜 오류" };
+  for (const r of rows.slice(-30).reverse()) {
+    const row = new UITableRow(); row.height = 56;
+    const amt = r.amt === undefined ? "" : (r.amt < 0 ? "−" : "+") + Math.abs(r.amt).toLocaleString() + "원";
+    row.addText(`${label[r.status] || r.status} ${r.card ? r.card.name : ""} ${amt}`, r.rec.body.replace(/\s+/g, " ").slice(0, 60));
+    t.addRow(row);
+  }
+  if (!rows.length) { const row = new UITableRow(); row.addText("이번 달 문자 파일이 없습니다 (inbox 폴더 확인)"); t.addRow(row); }
+  await t.present(false);
+}
+
 const man = v => (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1);
 const w = new ListWidget();
 w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
@@ -40,8 +57,12 @@ if (config.runsInApp && typeof Widget.reloadUserWidgets === "function") Widget.r
 try {
   const now = new Date();
   const { items, failed } = await load(now);
-  const { sum, cum, unparsed, dup } = core.aggregate(items, now.toISOString(), loadAdjust());
+  const res = core.aggregate(items, now.toISOString(), loadAdjust());
+  const { sum, cum, unparsed } = res;
+  var diagRows = res.rows;
   const warn = unparsed + failed;
+  // 앱에서 직접 실행하면(위젯 아님) 진단표를 먼저 보여준다: 어떤 문자가 어떻게 읽혔는지 확인용
+  if (!config.runsInWidget) await showDiag(core.CARDS, diagRows);
   const title = w.addText(`${now.getMonth() + 1}월 카드실적` + (warn ? `  ⚠︎${warn}` : ""));
   title.font = Font.boldSystemFont(12); title.textColor = Color.gray();
   w.addSpacer(4);

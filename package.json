@@ -1,1 +1,1 @@
-{ "name": "card-widget", "private": true, "scripts": { "build": "node scripts/build-single.js", "test": "node scripts/build-single.js && node test/ledger.test.js && node test/widget-mock.test.js" } }
+{ "name": "card-widget", "private": true, "scripts": { "build": "node scripts/build-single.js", "test": "node scripts/build-single.js && node test/ledger.test.js && node test/security.test.js && node test/widget-mock.test.js && node test/widget-app-mock.test.js" } }

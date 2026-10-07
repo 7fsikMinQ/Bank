@@ -11,6 +11,8 @@ const CARDS = [
     exclude: [/관리비|국세|지방세|공과금|상품권|선불|교통카드|충전/] },
 ];
 const HEAD_LEN = 30;
+const MAX_BODY = 2000;      // 비정상적으로 큰 파일(악성/오류) 방어
+const MAX_ADJUST = 10000000; // 수동 보정 상한(1천만 원)
 
 const CANCEL = /취소/;
 // 카드사가 붙여 주는 "누적 이용액"(교차검증용). 금액 추출 전에 본문에서 제거한다.
@@ -31,7 +33,7 @@ function parseFile(item) {
   const lines = text.split(/\r?\n/);
   let iso = lines[1] || "";
   if (!iso || isNaN(new Date(iso))) iso = isoFromName(name); // 2행이 비정상이면 파일명으로 복구
-  return { sender: lines[0] || "", iso, body: lines.slice(2).join("\n") };
+  return { sender: (lines[0] || "").slice(0, 60), iso, body: lines.slice(2).join("\n").slice(0, MAX_BODY) };
 }
 
 // 파일명 yyyyMMdd-HHmmss(-난수).txt 는 기기 로컬(KST) 시각
@@ -41,10 +43,13 @@ function isoFromName(name) {
 }
 
 function classify(rec) {
-  // 카드명은 "승인/취소/결제/이용" 키워드 앞(머리말)에서만 찾는다 → 뒤쪽 가맹점명 영향 차단
+  // 1순위: 단축어가 1행에 적어 준 카드 태그(예: "신한")가 카드 1개와 정확히 일치하면 그 카드
+  const tagHits = CARDS.filter(c => c.match.test(rec.sender));
+  const byTag = tagHits.length === 1 ? tagHits[0] : null;
+  // 2순위: 카드명은 "승인/취소/결제/이용" 키워드 앞(머리말)에서만 찾는다 → 뒤쪽 가맹점명 영향 차단
   const cut = rec.body.search(/승인|취소|결제|이용/);
   const head = rec.sender + "\n" + rec.body.slice(0, cut > 0 ? Math.min(cut, HEAD_LEN) : HEAD_LEN);
-  const hits = CARDS.filter(c => c.match.test(head));
+  const hits = byTag ? [byTag] : CARDS.filter(c => c.match.test(head));
   if (hits.length === 0) return { status: "nocard" };
   if (hits.length > 1) return { status: "ambiguous" };
   const card = hits[0];
@@ -67,16 +72,17 @@ function ymKST(iso) {
 function aggregate(items, nowIso, adjust = {}) {
   const ym = ymKST(nowIso);
   const sum = Object.fromEntries(CARDS.map(c => [c.id, 0]));
-  const cum = {}, cumAt = {}, seen = new Set();
+  const cum = {}, cumAt = {}, lastSeen = new Map(), rows = [];
   let unparsed = 0, dup = 0;
-  for (const it of items) {
-    const rec = parseFile(it);
-    if (!rec.iso || isNaN(new Date(rec.iso))) { unparsed++; continue; }
+  const recs = items.map(parseFile).sort((a, b) => (a.iso < b.iso ? -1 : a.iso > b.iso ? 1 : 0));
+  for (const rec of recs) {
+    if (!rec.iso || isNaN(new Date(rec.iso))) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
     if (ymKST(rec.iso) !== ym) continue;
-    const key = rec.sender + "|" + rec.body.trim() + "|" + new Date(rec.iso).toISOString().slice(0, 16);
-    if (seen.has(key)) { dup++; continue; }
-    seen.add(key);
+    const key = rec.sender + "|" + rec.body.trim(), t = new Date(rec.iso).getTime();
+    if (lastSeen.has(key) && t - lastSeen.get(key) < 60000) { dup++; rows.push({ rec, status: "dup" }); continue; }
+    lastSeen.set(key, t);
     const r = classify(rec);
+    rows.push({ rec, status: r.status, card: r.card, amt: r.amt });
     if (r.status === "ok") {
       sum[r.card.id] += r.amt;
       const cm = CUMUL.exec(rec.body);
@@ -85,8 +91,9 @@ function aggregate(items, nowIso, adjust = {}) {
       }
     } else if (r.status === "noamount" || r.status === "ambiguous") unparsed++;
   }
-  for (const [id, v] of Object.entries(adjust)) if (id in sum) sum[id] += v;
-  return { ym, sum, cum, unparsed, dup };
+  for (const [id, v] of Object.entries(adjust || {}))
+    if (id in sum && typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_ADJUST) sum[id] += v;
+  return { ym, sum, cum, unparsed, dup, rows };
 }
 
 
@@ -104,7 +111,9 @@ async function load(now) {
     try {
       const p = fm.joinPath(dir, name);
       if (!fm.isFileDownloaded(p)) await fm.downloadFileFromiCloud(p);
-      items.push({ name, text: fm.readString(p) });
+      const text = fm.readString(p);
+      if (text.length > 5000) { failed++; continue; } // 비정상적으로 큰 파일은 무시
+      items.push({ name, text });
     } catch (e) { failed++; }
   }
   return { items, failed };
@@ -120,6 +129,21 @@ function loadAdjust() {
   } catch (e) { return {}; }
 }
 
+async function showDiag(cards, rows) {
+  const t = new UITable(); t.showSeparators = true;
+  const head = new UITableRow(); head.isHeader = true;
+  head.addText("최근 문자 읽기 결과 (최신순, 30건)"); t.addRow(head);
+  const label = { ok: "OK", nocard: "카드 못 찾음", noamount: "금액 못 찾음", ambiguous: "카드 모호", excluded: "제외", dup: "중복", baddate: "날짜 오류" };
+  for (const r of rows.slice(-30).reverse()) {
+    const row = new UITableRow(); row.height = 56;
+    const amt = r.amt === undefined ? "" : (r.amt < 0 ? "−" : "+") + Math.abs(r.amt).toLocaleString() + "원";
+    row.addText(`${label[r.status] || r.status} ${r.card ? r.card.name : ""} ${amt}`, r.rec.body.replace(/\s+/g, " ").slice(0, 60));
+    t.addRow(row);
+  }
+  if (!rows.length) { const row = new UITableRow(); row.addText("이번 달 문자 파일이 없습니다 (inbox 폴더 확인)"); t.addRow(row); }
+  await t.present(false);
+}
+
 const man = v => (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1);
 const w = new ListWidget();
 w.backgroundColor = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
@@ -130,8 +154,12 @@ if (config.runsInApp && typeof Widget.reloadUserWidgets === "function") Widget.r
 try {
   const now = new Date();
   const { items, failed } = await load(now);
-  const { sum, cum, unparsed, dup } = core.aggregate(items, now.toISOString(), loadAdjust());
+  const res = core.aggregate(items, now.toISOString(), loadAdjust());
+  const { sum, cum, unparsed } = res;
+  var diagRows = res.rows;
   const warn = unparsed + failed;
+  // 앱에서 직접 실행하면(위젯 아님) 진단표를 먼저 보여준다: 어떤 문자가 어떻게 읽혔는지 확인용
+  if (!config.runsInWidget) await showDiag(core.CARDS, diagRows);
   const title = w.addText(`${now.getMonth() + 1}월 카드실적` + (warn ? `  ⚠︎${warn}` : ""));
   title.font = Font.boldSystemFont(12); title.textColor = Color.gray();
   w.addSpacer(4);
