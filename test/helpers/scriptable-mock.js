@@ -2,7 +2,7 @@
 // 쓰면 아이폰에서처럼 ReferenceError("Can't find variable")로 실패한다. 허용 전역 = 실제 Scriptable API 중 우리가 쓰는 것만.
 const fs = require("fs"), path = require("path"), os = require("os"), vm = require("vm");
 
-function run({ extraFiles = null, placeholder = null, bookmarkDir = "", logText = "", runsInWidget, withFiles = true, simple = false, file = "scriptable/CardWidget.single.js" }) {
+function run({ extraFiles = null, placeholder = null, bookmarkDir = "", logText = "", runsInWidget, withFiles = true, simple = false, file = "scriptable/CardWidget.single.js", scriptName = "CardWidget", noDraw = false, preState = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cl-")); const inbox = path.join(tmp, "CardLedger/inbox");
   fs.mkdirSync(inbox, { recursive: true });
   const kst = new Date(Date.now() + 9 * 3600e3);
@@ -20,13 +20,14 @@ function run({ extraFiles = null, placeholder = null, bookmarkDir = "", logText 
     fs.writeFileSync(path.join(tmp, "CardLedger/adjust.json"), '{"sh": 12000}');
     fs.writeFileSync(path.join(inbox, "199001-old.txt"), "x\ny\nz");
   }
+  if (preState !== null) fs.writeFileSync(path.join(tmp, "CardLedger/quest-state.json"), preState);
   const pending = {};
   if (extraFiles) for (const [n, c] of Object.entries(extraFiles)) fs.writeFileSync(path.join(inbox, n), c);        // 예: "텍스트"(확장자 없음)
   if (placeholder) { fs.writeFileSync(path.join(inbox, "." + placeholder.name + ".icloud"), ""); pending[path.join(inbox, placeholder.name)] = placeholder.text; }  // 아직 내려받지 않은 iCloud 파일
   const bookmarks = bookmarkDir ? { ShortcutsFolder: bookmarkDir } : {};
   if (logText) fs.writeFileSync(path.join(tmp, "CardLedger/log.txt"), logText);
-  const rows = [], diag = [];
-  const mk = () => ({ addText: t => { rows.push(t); return { font: 0, textColor: 0, lineLimit: 0 }; }, addStack() { return mk(); }, addSpacer() {}, centerAlignContent() {} });
+  const rows = [], diag = [], bars = [], webs = [];
+  const mk = () => ({ addText: t => { rows.push(t); return { font: 0, textColor: 0, lineLimit: 0 }; }, addStack() { return mk(); }, addSpacer() {}, centerAlignContent() {}, addImage: i => { bars.push(i); return {}; } });
   const fm = { documentsDirectory: () => tmp, joinPath: path.join, fileExists: fs.existsSync, listContents: p => fs.readdirSync(p),
     isFileDownloaded: p => !Object.keys(pending).includes(p) || fs.existsSync(p), downloadFileFromiCloud: async p => { if (pending[p]) fs.writeFileSync(p, pending[p]); }, readString: p => fs.readFileSync(p, "utf8"),
     modificationDate: p => fs.statSync(p).mtime, creationDate: p => fs.statSync(p).birthtime,
@@ -39,10 +40,14 @@ function run({ extraFiles = null, placeholder = null, bookmarkDir = "", logText 
     UITable: function () { this.rows = []; this.addRow = r => this.rows.push(r); this.present = async () => { this.rows.forEach(r => diag.push(r.t)); }; },
     UITableRow: function () { this.addText = (a, b) => { this.t = a + " / " + (b || ""); }; },
     config: { runsInWidget, runsInApp: !runsInWidget },
-    Script: { name: () => "CardWidget", setWidget() {}, complete() {} },
+    Script: { name: () => scriptName, setWidget() {}, complete() {} },
+    Size: function (w, h) { this.w = w; this.h = h; }, Rect: function (x, y, w, h) { Object.assign(this, { x, y, w, h }); },
+    Path: { roundedRect: (r) => r },
+    DrawContext: function () { if (noDraw) throw new Error("no DrawContext"); this.setFillColor = () => {}; this.addPath = () => {}; this.fillPath = () => {}; this.getImage = () => ({ drawn: true }); },
+    WebView: function () { this.loadHTML = async h => { webs.push(h); }; this.present = async () => {}; },
     encodeURIComponent, Date, JSON, Math, Promise, Number, String, Array, Object, Set, Map, RegExp, Error, isNaN, parseInt, console,
   };
   const src = "(async () => {\n" + fs.readFileSync(path.join(__dirname, "../..", file), "utf8") + "\n})()";
-  return vm.runInNewContext(src, sandbox).then(() => ({ rows, diag, tmp }));
+  return vm.runInNewContext(src, sandbox).then(() => ({ rows, diag, tmp, bars, webs }));
 }
 module.exports = { run };

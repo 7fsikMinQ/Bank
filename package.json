@@ -1,1 +1,1 @@
-{ "name": "card-widget", "private": true, "scripts": { "build": "node scripts/build-single.js", "test": "sh scripts/test-all.sh" } }
+{ "name": "card-widget", "private": true, "scripts": { "build": "node scripts/build-single.js && node scripts/build-quest.js", "test": "sh scripts/test-all.sh" } }

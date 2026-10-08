@@ -2,10 +2,11 @@
 // 실행되지 않는 분기(오류 처리 등)에 숨은 "Can't find variable" 도 잡는다.
 const fs = require("fs");
 const allowed = new Set(["FileManager", "ListWidget", "Color", "Font", "UITable", "UITableRow", "Script", "Date", "JSON", "Math", "Promise",
-  "Number", "String", "Array", "Object", "Set", "Map", "RegExp", "Error", "Infinity", "NaN", "Boolean"]);
+  "Number", "String", "Array", "Object", "Set", "Map", "RegExp", "Error", "Infinity", "NaN", "Boolean",
+  "Size", "Rect", "Path", "DrawContext", "WebView"]);
 const strip = s => s.replace(/\/\/[^\n]*/g, "").replace(/`(?:\\.|[^`\\])*`/g, "``").replace(/"(?:\\.|[^"\\\n])*"/g, '""').replace(/'(?:\\.|[^'\\\n])*'/g, "''").replace(/\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuy]*/g, "/re/");
 let bad = [];
-for (const f of ["scriptable/CardWidget.single.js"]) {
+for (const f of ["scriptable/CardWidget.single.js", "scriptable/CardQuest.single.js"]) {
   const src = strip(fs.readFileSync(f, "utf8"));
   const declared = new Set([...src.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(m => m[1]));
   for (const m of src.matchAll(/(?<![.\w$])([A-Z][A-Za-z0-9_]*)\s*(?=[.(])/g)) {

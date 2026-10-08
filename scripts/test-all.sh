@@ -4,9 +4,10 @@
 set -eu
 cd "$(dirname "$0")/.."
 node scripts/build-single.js
+node scripts/build-quest.js
 for tz in Asia/Seoul UTC America/Los_Angeles Pacific/Kiritimati; do
   echo "== TZ=$tz"
-  for t in ledger real-sms tiers body-date month-sim log-mode file-names user-file-names simple-mode security globals cards-fuzz dates widget-mock widget-app-mock docs-sync; do
+  for t in ledger real-sms tiers body-date month-sim log-mode file-names user-file-names simple-mode security globals cards-fuzz dates widget-mock widget-app-mock quest-core quest-widget docs-sync; do
     out=$(TZ=$tz node "test/$t.test.js") || { echo "FAILED: test/$t.test.js (TZ=$tz)"; echo "$out"; exit 1; }
     echo "   $(echo "$out" | grep -E 'OK' | tail -1)"
   done

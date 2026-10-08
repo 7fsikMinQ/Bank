@@ -7,3 +7,5 @@ w = w.replace(/^\/\/ Scriptable 위젯[\s\S]*?\n(?=const fm)/, "");
 const out = core + "\nconst core = { CARDS, nextTarget, aggregate, monthInfo, prevYm, logItems };\n" + w;
 fs.writeFileSync("scriptable/CardWidget.single.js", out);
 console.log("wrote scriptable/CardWidget.single.js", out.split("\n").length, "lines");
+
+require("./make-check.js")("scriptable/CardWidget.single.js", "CardWidget", "scriptable/CardCheck.js");

@@ -30,8 +30,12 @@ BC 바로 / 네이버 현대 ED3 / 신한 / 우리다모아의 **이번 달 사�
 - 붙여넣을 때 **번역 기능을 끌 것**(변수 `best`가 `최고`로 바뀌면 `Can't find variable: 최고` 오류). 폰에서 `CardCheck`로 원본과 같은지 검사 가능.
 - 오류가 나면 빨간 글씨에 `(줄 N:M)`이 표시됨.
 
+## 실적 퀘스트 (선택)
+카드 실적을 경험치 바 + 동물 캐릭터(🦊BC 🐻현대 🐱신한 🐰우리)로 보여주는 별도 위젯 `CardQuest` + 탭하면 열리는 전체 화면(애니메이션·레벨업). 설치와 사용법은 가이드 §14, 기획은 [docs/실적퀘스트-기획서.md](docs/실적퀘스트-기획서.md).
+
 ## 파일
 - `scriptable/CardWidget.single.js` : **아이폰 Scriptable에 붙여넣는 완성본** (생성물, 직접 수정 금지)
+- `scriptable/CardQuest.single.js` : 실적 퀘스트 완성본(생성물) · `scriptable/CardQuestCheck.js` : 그 원본 대조 검사
 - `scriptable/CardCheck.js` : 폰에 붙여넣은 `CardWidget`이 원본과 같은지 검사하는 보조 스크립트(읽기 전용)
 - `scriptable/ledger-core.js`, `scriptable/CardWidget.js` : 소스 → `npm run build` 로 단일 파일 생성
 - `test/`, `scripts/` : `npm test` → 4개 시간대에서 전체 테스트(실제 문자·월 경계·퍼즈·보안·위젯 모의 실행·문서 동기화)
