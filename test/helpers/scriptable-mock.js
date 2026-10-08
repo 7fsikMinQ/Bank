@@ -16,6 +16,7 @@ function run({ runsInWidget, withFiles = true, simple = false, file = "scriptabl
       fs.writeFileSync(path.join(inbox, "Text.txt"), "[Web발신]\n비씨 신용 승인 1,000원 일시불 편의점 누적 1,000원");
       fs.writeFileSync(path.join(inbox, "Text 1.txt"), "현대 네이버 승인 5,000원");
     }
+    fs.writeFileSync(path.join(inbox, `${pre}03-101010-4444.txt`), `우리카드\n${iso}\n[Web발신]\n우리카드(1234) 승인\n홍*동님\n9,900원 일시불\n10/08 09:34`);
     fs.writeFileSync(path.join(tmp, "CardLedger/adjust.json"), '{"sh": 12000}');
     fs.writeFileSync(path.join(inbox, "199001-old.txt"), "x\ny\nz");
   }

@@ -55,7 +55,7 @@ async function showDiag(cards, rows) {
   await t.present(false);
 }
 
-const man = v => (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1);
+const man = v => (v / 10000).toFixed(2).replace(/\.?0+$/, ""); // 만원 단위, 소수 2자리까지(9,900원 → 0.99)
 const w = new ListWidget();
 // Color.dynamic 이 없는 버전이어도 죽지 않게 방어
 w.backgroundColor = typeof Color.dynamic === "function" ? Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e")) : new Color("#1c1c1e");
@@ -75,12 +75,14 @@ try {
   title.font = Font.boldSystemFont(12); title.textColor = Color.gray();
   w.addSpacer(4);
   for (const c of core.CARDS) {
-    const v = sum[c.id], tgt = core.nextTarget(c, v), ok = v >= tgt;
+    const v = sum[c.id];
+    const tgt = c.noTarget ? 0 : core.nextTarget(c, v);
+    const ok = c.noTarget ? v > 0 : v >= tgt;           // 신한: 0원만 아니면 달성(초록)
     const row = w.addStack(); row.centerAlignContent();
     const n = row.addText(c.name + (c.confirmed ? "" : "?")); n.font = Font.systemFont(12); n.lineLimit = 1;
     row.addSpacer();
     const star = cum[c.id] !== undefined && cum[c.id] !== v ? "*" : ""; // 문자 누적액과 불일치
-    const t = row.addText(`${star}${man(v)}/${man(tgt)}만`);
+    const t = row.addText(c.noTarget ? `${star}${v.toLocaleString()}원` : `${star}${man(v)}/${man(tgt)}만`);
     t.font = Font.boldMonospacedSystemFont(12);
     t.textColor = ok ? Color.green() : Color.red();
     w.addSpacer(2);
