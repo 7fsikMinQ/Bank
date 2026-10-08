@@ -66,7 +66,7 @@ try {
   const now = new Date();
   const { items, failed } = await load(now);
   const res = core.aggregate(items, now.toISOString(), loadAdjust());
-  const { sum, cum, unparsed, info } = res;
+  const { sum, unparsed, info } = res;
   var diagRows = res.rows;
   const warn = unparsed + failed;
   // 앱에서 직접 실행하면(위젯 아님) 진단표를 먼저 보여준다: 어떤 문자가 어떻게 읽혔는지 확인용
@@ -81,8 +81,7 @@ try {
     const row = w.addStack(); row.centerAlignContent();
     const n = row.addText(c.name + (c.confirmed ? "" : "?")); n.font = Font.systemFont(12); n.lineLimit = 1;
     row.addSpacer();
-    const star = cum[c.id] !== undefined && cum[c.id] !== v ? "*" : ""; // 문자 누적액과 불일치
-    const t = row.addText(c.noTarget ? `${star}${v.toLocaleString()}원` : `${star}${man(v)}/${man(tgt)}만`);
+    const t = row.addText(c.noTarget ? `${v.toLocaleString()}원` : `${man(v)}/${man(tgt)}만`);
     t.font = Font.boldMonospacedSystemFont(12);
     t.textColor = ok ? Color.green() : Color.red();
     w.addSpacer(2);

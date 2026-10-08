@@ -38,8 +38,7 @@ let r = aggregate([
   raw(SMS.shChk, t("10:00"), "Text 10.txt"),
 ], "2026-10-08T12:00:00+09:00");
 assert.deepStrictEqual(r.sum, { bc: 0, hd: 0, sh: 0, wr: 0 });
-// 문자에 들어 있는 카드사 누적이용액(승인 문자 기준)은 읽혀야 한다
-assert.deepStrictEqual(r.cum, { wr: 1700047, bc: 1120900, hd: 506100, sh: 81683 });
+// 카드사 "총누적/누적" 금액은 그달 누적이 아니므로 합계에 영향을 주지 않는다(위 순 0원이 그 증거)
 
 // 승인만 하고 취소 안 한 경우 합산
 r = aggregate([raw(SMS.bcOk, t("09:27")), raw(SMS.hdOk, t("09:36"), "Text 1.txt"), raw(SMS.shOk, t("09:40"), "Text 2.txt"), raw(SMS.wrOk, t("09:34"), "Text 3.txt")], "2026-10-08T12:00:00+09:00");
@@ -49,7 +48,7 @@ assert.deepStrictEqual(r.sum, { bc: 9900, hd: 9900, sh: 9900, wr: 9900 });
 const adj = { "2026-10": { bc: 1111000, hd: 506100, sh: 81683, wr: 1690147 }, "2026-11": { bc: 5 } };
 r = aggregate([raw(SMS.bcOk, t("09:27"))], "2026-10-08T12:00:00+09:00", adj);
 assert.deepStrictEqual(r.sum, { bc: 1111000 + 9900, hd: 506100, sh: 81683, wr: 1690147 });
-r = aggregate([raw(SMS.bcOk, "2026-11-02T09:27:00+09:00")], "2026-11-03T12:00:00+09:00", adj);
+r = aggregate([raw(SMS.bcOk.replace("10/08 09:27", "11/02 09:27"), "2026-11-02T09:27:00+09:00")], "2026-11-03T12:00:00+09:00", adj);
 assert.deepStrictEqual(r.sum, { bc: 9900 + 5, hd: 0, sh: 0, wr: 0 });   // 11월엔 10월 보정이 적용되지 않음
 r = aggregate([], "2026-10-08T12:00:00+09:00", { bc: 100 });            // 예전 방식(모든 달 적용)도 유지
 assert.strictEqual(r.sum.bc, 100);

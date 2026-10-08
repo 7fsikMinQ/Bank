@@ -24,7 +24,7 @@ const MAX_BODY = 2000;      // 비정상적으로 큰 파일(악성/오류) 방�
 const MAX_ADJUST = 10000000; // 수동 보정 상한(1천만 원)
 
 const CANCEL = /취소/;
-// 카드사가 붙여 주는 "누적 이용액"(교차검증용). 금액 추출 전에 본문에서 제거한다.
+// 카드사 문자의 "누적/총누적" 금액은 그달 누적이 아니므로 계산에 쓰지 않는다. 승인금액으로 오인하지 않도록 금액 추출 전에 지우기만 한다.
 const CUMUL = /누적\s*(?:이용|사용)?\s*(?:금액|액)?\s*:?\s*([0-9][0-9,]*)\s*원/;
 const CUMUL_G = new RegExp(CUMUL.source, "g");
 // 잔액/한도/포인트 금액은 승인금액이 아니다
@@ -42,7 +42,7 @@ function nextTarget(card, v) {
 //  (A) 헤더 모드: 1행 태그 / 2행 ISO일시 / 3행~ 본문  (단축어 동작 6개짜리 방식)
 //  (B) 간단 모드: 파일 전체가 문자 원문. 시각은 파일명(yyyyMMdd-HHmmss)이 있으면 그것, 없으면 파일 수정시각(mtime)  (동작 2개짜리 방식)
 const TAG_LINE = /^(?:비씨|BC|우리카드|현대카드|신한|우리|현대)$/;
-function parseFile(item) {
+function parseFile(item, nowIso) {
   const text = typeof item === "string" ? item : item.text;
   const name = typeof item === "string" ? "" : item.name || "";
   const mtime = typeof item === "string" ? "" : item.mtime || "";
@@ -52,10 +52,34 @@ function parseFile(item) {
   if (isHeader) {
     let iso = headerDate;
     if (!iso || isNaN(new Date(iso))) iso = isoFromName(name) || normalizeIso(mtime); // 2행이 비정상이면 파일명→수정시각으로 복구
-    return { sender: (lines[0] || "").slice(0, 60), iso, body: lines.slice(2).join("\n").slice(0, MAX_BODY) };
+    const body = lines.slice(2).join("\n").slice(0, MAX_BODY);
+    return { sender: (lines[0] || "").slice(0, 60), iso: bodyDateIso(body, iso || nowIso) || iso, recv: iso, body };
   }
-  const iso = isoFromName(name) || normalizeIso(mtime);
-  return { sender: "", iso, body: text.slice(0, MAX_BODY) };
+  const ref = isoFromName(name) || normalizeIso(mtime);
+  const body = text.slice(0, MAX_BODY);
+  return { sender: "", iso: bodyDateIso(body, ref || nowIso) || ref, recv: ref, body };
+}
+
+// 문자 본문의 거래 일시 "MM/DD HH:mm"(예: 10/31 23:59, 실제 4개 카드 문자 모두 이 형식)로 월을 판정한다.
+// → 자동화가 늦게 실행돼 파일 시각이 다음 달이 되어도 거래가 일어난 달로 정확히 들어간다.
+// 연도는 기준 시각(파일 시각)에서 가장 가까운 해로 추정(12월→1월 경계 포함). 존재하지 않는 날짜(평년 2/29)·기준과 40일 넘게 차이 나면 무시.
+const BODY_DATE = /(?:^|[^\d/])(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})(?!\d)/;
+function bodyDateIso(body, refIso) {
+  const m = BODY_DATE.exec(body);
+  if (!m || !refIso || !validDate(refIso)) return "";
+  const mo = +m[1], d = +m[2], h = +m[3], mi = +m[4];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return "";
+  const ref = new Date(normalizeIso(refIso)).getTime();
+  const refYear = new Date(ref + 9 * 3600 * 1000).getUTCFullYear();
+  let best = NaN, bestDiff = Infinity;
+  for (const y of [refYear - 1, refYear, refYear + 1]) {
+    const t = Date.UTC(y, mo - 1, d, h - 9, mi);                    // KST 시각 → UTC
+    const k = new Date(t + 9 * 3600 * 1000);
+    if (k.getUTCMonth() !== mo - 1 || k.getUTCDate() !== d) continue;   // 없는 날짜(평년 2/29 등)
+    const diff = Math.abs(t - ref);
+    if (diff < bestDiff) { bestDiff = diff; best = t; }
+  }
+  return isNaN(best) || bestDiff > 40 * 86400 * 1000 ? "" : new Date(best).toISOString();
 }
 
 // 파일명 yyyyMMdd-HHmmss(-난수).txt 는 기기 로컬(KST) 시각
@@ -116,28 +140,24 @@ function monthInfo(nowIso) {
   return { ym, year, month, days: daysInMonth(year, month), day: k.getUTCDate() };
 }
 
-// adjust: {카드id: 원} 수동 보정(누락 문자 등). dedupe: 같은 발신자+본문+같은 분(分)은 1건
+// adjust: 수동 보정(시작 잔액 등). 중복: 같은 본문이 60초 안에 2번 저장되면 1건
 function aggregate(items, nowIso, adjust = {}) {
   const info = monthInfo(nowIso), ym = info.ym;
   const sum = Object.fromEntries(CARDS.map(c => [c.id, 0]));
-  const cum = {}, cumAt = {}, lastSeen = new Map(), rows = [];
+  const lastSeen = new Map(), rows = [];
   let unparsed = 0, dup = 0;
-  const recs = items.map(parseFile).map(r => ({ ...r, ts: validDate(r.iso) ? new Date(r.iso).getTime() : NaN }))
+  const recs = items.map(it => parseFile(it, nowIso)).map(r => ({ ...r, ts: validDate(r.iso) ? new Date(r.iso).getTime() : NaN, rts: r.recv && validDate(r.recv) ? new Date(normalizeIso(r.recv)).getTime() : NaN }))
     .sort((a, b) => (isNaN(a.ts) ? -1 : isNaN(b.ts) ? 1 : a.ts - b.ts)); // 실제 시각 순(문자열 비교 금지: Z/+09:00 혼재)
   for (const rec of recs) {
     if (!rec.iso || !validDate(rec.iso)) { unparsed++; rows.push({ rec, status: "baddate" }); continue; }
     if (ymKST(rec.iso) !== ym) continue;
-    const key = rec.body.trim(), t = rec.ts;
+    const key = rec.body.trim(), t = isNaN(rec.rts) ? rec.ts : rec.rts;   // 중복 판정은 "저장된 시각" 기준(월 판정은 거래 일시 기준)
     if (lastSeen.has(key) && t - lastSeen.get(key) < 60000) { dup++; rows.push({ rec, status: "dup" }); continue; }
     lastSeen.set(key, t);
     const r = classify(rec);
     rows.push({ rec, status: r.status, card: r.card, amt: r.amt, fx: r.fx });
     if (r.status === "ok") {
       sum[r.card.id] += r.amt;
-      const cm = CUMUL.exec(rec.body);
-      if (cm && (cumAt[r.card.id] === undefined || rec.ts >= cumAt[r.card.id])) {
-        cumAt[r.card.id] = rec.ts; cum[r.card.id] = parseInt(cm[1].replace(/,/g, ""), 10);
-      }
     } else if (r.status === "noamount" || r.status === "ambiguous") unparsed++;
   }
   // adjust: {"2026-10": {"bc": 1111000}} 처럼 달을 지정하면 그 달에만 적용, {"bc": 1000} 처럼 쓰면 매달 적용
@@ -145,7 +165,7 @@ function aggregate(items, nowIso, adjust = {}) {
   for (const [k, v] of Object.entries(adjust || {})) if (typeof v === "number") flat[k] = v;
   for (const [id, v] of Object.entries({ ...flat, ...scoped }))
     if (id in sum && typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_ADJUST) sum[id] += v;
-  return { ym, info, sum, cum, unparsed, dup, rows };
+  return { ym, info, sum, unparsed, dup, rows };
 }
 
-if (typeof module !== "undefined") module.exports = { FX_USD_KRW, CARDS, nextTarget, normalizeIso, daysInMonth, prevYm, monthInfo, aggregate, classify, parseFile, ymKST, isoFromName };
+if (typeof module !== "undefined") module.exports = { FX_USD_KRW, CARDS, bodyDateIso, nextTarget, normalizeIso, daysInMonth, prevYm, monthInfo, aggregate, classify, parseFile, ymKST, isoFromName };
