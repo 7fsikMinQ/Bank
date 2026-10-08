@@ -5,19 +5,16 @@ const fm = FileManager.iCloud();
 const root = fm.joinPath(fm.documentsDirectory(), "CardLedger");
 const dir = fm.joinPath(root, "inbox");
 
-async function load(now) {
-  // 이번 달(KST 기준)과 전달 prefix(yyyyMM) 파일만 읽어 iCloud 부담을 줄인다.
-  // 파일명은 폰 현지 시각이라, 폰 시간대가 한국이 아니어도 월 경계 파일을 놓치지 않도록 전달까지 읽는다(월 분리는 코어가 KST로 정확히 수행).
-  const ym = core.monthInfo(now.toISOString()).ym;
-  const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
-  if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
-  const items = []; let failed = 0;
-  const okMonths = new Set([ym, core.prevYm(ym)]);
-  for (const name of fm.listContents(dir).filter(n => n.endsWith(".txt"))) {
+// 문자 파일을 읽는 위치 3가지:
+//  (1) CardLedger/inbox 폴더  (2) Scriptable 설정 > File Bookmarks 에 "ShortcutsFolder" 이름으로 연결한 폴더(예: iCloud Drive/Shortcuts)
+//  (3) CardLedger/log.txt  ("텍스트 파일에 추가" 동작으로 한 파일에 이어 붙인 경우)
+async function readTxtDir(d, now, okMonths, pres, items) {
+  let failed = 0;
+  for (const name of fm.listContents(d).filter(n => n.endsWith(".txt"))) {
     try {
-      const p = fm.joinPath(dir, name);
+      const p = fm.joinPath(d, name);
       let mtime = "";
-      try { const d = fm.modificationDate(p) || fm.creationDate(p); mtime = d ? d.toISOString() : ""; } catch (e) {}
+      try { const t = fm.modificationDate(p) || fm.creationDate(p); mtime = t ? t.toISOString() : ""; } catch (e) {}
       // 날짜로 시작하는 파일명(yyyyMM…)은 이름으로, 그 외(간단 모드 "Text 3.txt" 등)는 수정시각으로 이번 달/전달만 읽는다
       const byName = /^\d{6}/.test(name) ? pres.some(pr => name.startsWith(pr)) : (mtime ? okMonths.has(core.monthInfo(mtime).ym) : true);
       if (!byName) continue;
@@ -27,6 +24,33 @@ async function load(now) {
       items.push({ name, text, mtime });
     } catch (e) { failed++; }
   }
+  return failed;
+}
+
+async function load(now) {
+  // 이번 달(KST 기준)과 전달 prefix(yyyyMM) 파일만 읽어 iCloud 부담을 줄인다.
+  // 파일명은 폰 현지 시각이라, 폰 시간대가 한국이 아니어도 월 경계 파일을 놓치지 않도록 전달까지 읽는다(월 분리는 코어가 KST로 정확히 수행).
+  const ym = core.monthInfo(now.toISOString()).ym;
+  const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
+  const okMonths = new Set([ym, core.prevYm(ym)]);
+  if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
+  const items = []; let failed = await readTxtDir(dir, now, okMonths, pres, items);
+  // (2) 연결된 폴더(선택)
+  try {
+    if (fm.bookmarkExists("ShortcutsFolder")) {
+      const bd = fm.bookmarkedPath("ShortcutsFolder");
+      if (fm.fileExists(bd)) failed += await readTxtDir(bd, now, okMonths, pres, items);
+    }
+  } catch (e) { failed++; }
+  // (3) 로그 파일: 없으면 빈 파일을 만들어 둔다(단축어의 "텍스트 파일에 추가"에서 고를 수 있도록)
+  try {
+    const lp = fm.joinPath(root, "log.txt");
+    if (!fm.fileExists(lp)) fm.writeString(lp, "");
+    else {
+      if (!fm.isFileDownloaded(lp)) await fm.downloadFileFromiCloud(lp);
+      items.push(...core.logItems(fm.readString(lp), now.toISOString()));
+    }
+  } catch (e) { failed++; }
   return { items, failed };
 }
 

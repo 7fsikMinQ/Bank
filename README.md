@@ -21,6 +21,8 @@ BC 바로 / 네이버 현대 ED3 / 신한 / 우리다모아의 **이번 달 사�
 - **취소**는 −금액, **달러 결제**는 1달러 = 1,320원 고정 환산
 - 자동화는 **1개**(보낸 사람 4개 번호, 키워드 없음) + 동작 2개(입력에서 텍스트 가져오기 → 파일 저장)
 
+- 문자 저장 위치 3가지 지원: `CardLedger/inbox`, 연결 폴더(`ShortcutsFolder`), `CardLedger/log.txt`(이어 붙이기)
+
 ## 파일
 - `scriptable/CardWidget.single.js` : **아이폰 Scriptable에 붙여넣는 완성본** (생성물, 직접 수정 금지)
 - `scriptable/ledger-core.js`, `scriptable/CardWidget.js` : 소스 → `npm run build` 로 단일 파일 생성

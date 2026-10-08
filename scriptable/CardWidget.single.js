@@ -82,6 +82,38 @@ function bodyDateIso(body, refIso) {
   return isNaN(best) || bestDiff > 40 * 86400 * 1000 ? "" : new Date(best).toISOString();
 }
 
+// ── 로그 파일 방식 ─────────────────────────────────────────────────────────
+// "텍스트 파일에 추가" 동작으로 한 파일(log.txt)에 문자를 계속 이어 붙인 경우. 문자는 모두 "[Web발신]"으로 시작하므로 그 단위로 나눈다.
+// 문자에는 연도가 없으므로(MM/DD HH:mm) 파일 순서(= 시간순)를 이용해 "마지막 문자부터 거꾸로" 연도를 복원한다.
+// → 로그가 1년 넘게 쌓여도 같은 날짜(예: 10/08)가 서로 다른 해로 정확히 구분된다.
+function splitLog(text) {
+  return String(text || "").split(/(?=\[Web발신\])/).map(x => x.trim()).filter(x => x.startsWith("[Web발신]") && x.length > 12);
+}
+function logItems(text, nowIso, maxChunks = 5000) {
+  const chunks = splitLog(text).slice(-maxChunks);
+  const items = new Array(chunks.length);
+  let upper = new Date(normalizeIso(nowIso)).getTime() + 36 * 3600 * 1000;   // 다음(더 나중) 문자의 시각 + 여유 36시간
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const m = BODY_DATE.exec(chunks[i]);
+    let t = NaN;
+    if (m) {
+      const mo = +m[1], d = +m[2], h = +m[3], mi = +m[4];
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59) {
+        const uy = new Date(upper + 9 * 3600 * 1000).getUTCFullYear();
+        for (const y of [uy, uy - 1, uy - 2]) {                                 // upper 이전 중 가장 늦은 해
+          const c = Date.UTC(y, mo - 1, d, h - 9, mi), k = new Date(c + 9 * 3600 * 1000);
+          if (k.getUTCMonth() !== mo - 1 || k.getUTCDate() !== d) continue;     // 없는 날짜(평년 2/29)
+          if (c <= upper) { t = c; break; }
+        }
+      }
+    }
+    if (isNaN(t)) t = upper - 36 * 3600 * 1000;                                // 날짜를 못 읽으면 다음 문자 시각으로 간주
+    items[i] = { name: "log.txt", text: chunks[i], mtime: new Date(t).toISOString() };
+    upper = t + 36 * 3600 * 1000;
+  }
+  return items;
+}
+
 // 파일명 yyyyMMdd-HHmmss(-난수).txt 는 기기 로컬(KST) 시각
 function isoFromName(name) {
   const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
@@ -169,24 +201,21 @@ function aggregate(items, nowIso, adjust = {}) {
 }
 
 
-const core = { CARDS, nextTarget, aggregate, monthInfo, prevYm };
+const core = { CARDS, nextTarget, aggregate, monthInfo, prevYm, logItems };
 const fm = FileManager.iCloud();
 const root = fm.joinPath(fm.documentsDirectory(), "CardLedger");
 const dir = fm.joinPath(root, "inbox");
 
-async function load(now) {
-  // 이번 달(KST 기준)과 전달 prefix(yyyyMM) 파일만 읽어 iCloud 부담을 줄인다.
-  // 파일명은 폰 현지 시각이라, 폰 시간대가 한국이 아니어도 월 경계 파일을 놓치지 않도록 전달까지 읽는다(월 분리는 코어가 KST로 정확히 수행).
-  const ym = core.monthInfo(now.toISOString()).ym;
-  const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
-  if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
-  const items = []; let failed = 0;
-  const okMonths = new Set([ym, core.prevYm(ym)]);
-  for (const name of fm.listContents(dir).filter(n => n.endsWith(".txt"))) {
+// 문자 파일을 읽는 위치 3가지:
+//  (1) CardLedger/inbox 폴더  (2) Scriptable 설정 > File Bookmarks 에 "ShortcutsFolder" 이름으로 연결한 폴더(예: iCloud Drive/Shortcuts)
+//  (3) CardLedger/log.txt  ("텍스트 파일에 추가" 동작으로 한 파일에 이어 붙인 경우)
+async function readTxtDir(d, now, okMonths, pres, items) {
+  let failed = 0;
+  for (const name of fm.listContents(d).filter(n => n.endsWith(".txt"))) {
     try {
-      const p = fm.joinPath(dir, name);
+      const p = fm.joinPath(d, name);
       let mtime = "";
-      try { const d = fm.modificationDate(p) || fm.creationDate(p); mtime = d ? d.toISOString() : ""; } catch (e) {}
+      try { const t = fm.modificationDate(p) || fm.creationDate(p); mtime = t ? t.toISOString() : ""; } catch (e) {}
       // 날짜로 시작하는 파일명(yyyyMM…)은 이름으로, 그 외(간단 모드 "Text 3.txt" 등)는 수정시각으로 이번 달/전달만 읽는다
       const byName = /^\d{6}/.test(name) ? pres.some(pr => name.startsWith(pr)) : (mtime ? okMonths.has(core.monthInfo(mtime).ym) : true);
       if (!byName) continue;
@@ -196,6 +225,33 @@ async function load(now) {
       items.push({ name, text, mtime });
     } catch (e) { failed++; }
   }
+  return failed;
+}
+
+async function load(now) {
+  // 이번 달(KST 기준)과 전달 prefix(yyyyMM) 파일만 읽어 iCloud 부담을 줄인다.
+  // 파일명은 폰 현지 시각이라, 폰 시간대가 한국이 아니어도 월 경계 파일을 놓치지 않도록 전달까지 읽는다(월 분리는 코어가 KST로 정확히 수행).
+  const ym = core.monthInfo(now.toISOString()).ym;
+  const pres = [ym.replace("-", ""), core.prevYm(ym).replace("-", "")];
+  const okMonths = new Set([ym, core.prevYm(ym)]);
+  if (!fm.fileExists(dir)) throw new Error("inbox 폴더 없음: iCloud Drive/Scriptable/CardLedger/inbox");
+  const items = []; let failed = await readTxtDir(dir, now, okMonths, pres, items);
+  // (2) 연결된 폴더(선택)
+  try {
+    if (fm.bookmarkExists("ShortcutsFolder")) {
+      const bd = fm.bookmarkedPath("ShortcutsFolder");
+      if (fm.fileExists(bd)) failed += await readTxtDir(bd, now, okMonths, pres, items);
+    }
+  } catch (e) { failed++; }
+  // (3) 로그 파일: 없으면 빈 파일을 만들어 둔다(단축어의 "텍스트 파일에 추가"에서 고를 수 있도록)
+  try {
+    const lp = fm.joinPath(root, "log.txt");
+    if (!fm.fileExists(lp)) fm.writeString(lp, "");
+    else {
+      if (!fm.isFileDownloaded(lp)) await fm.downloadFileFromiCloud(lp);
+      items.push(...core.logItems(fm.readString(lp), now.toISOString()));
+    }
+  } catch (e) { failed++; }
   return { items, failed };
 }
 

@@ -82,6 +82,38 @@ function bodyDateIso(body, refIso) {
   return isNaN(best) || bestDiff > 40 * 86400 * 1000 ? "" : new Date(best).toISOString();
 }
 
+// ── 로그 파일 방식 ─────────────────────────────────────────────────────────
+// "텍스트 파일에 추가" 동작으로 한 파일(log.txt)에 문자를 계속 이어 붙인 경우. 문자는 모두 "[Web발신]"으로 시작하므로 그 단위로 나눈다.
+// 문자에는 연도가 없으므로(MM/DD HH:mm) 파일 순서(= 시간순)를 이용해 "마지막 문자부터 거꾸로" 연도를 복원한다.
+// → 로그가 1년 넘게 쌓여도 같은 날짜(예: 10/08)가 서로 다른 해로 정확히 구분된다.
+function splitLog(text) {
+  return String(text || "").split(/(?=\[Web발신\])/).map(x => x.trim()).filter(x => x.startsWith("[Web발신]") && x.length > 12);
+}
+function logItems(text, nowIso, maxChunks = 5000) {
+  const chunks = splitLog(text).slice(-maxChunks);
+  const items = new Array(chunks.length);
+  let upper = new Date(normalizeIso(nowIso)).getTime() + 36 * 3600 * 1000;   // 다음(더 나중) 문자의 시각 + 여유 36시간
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const m = BODY_DATE.exec(chunks[i]);
+    let t = NaN;
+    if (m) {
+      const mo = +m[1], d = +m[2], h = +m[3], mi = +m[4];
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59) {
+        const uy = new Date(upper + 9 * 3600 * 1000).getUTCFullYear();
+        for (const y of [uy, uy - 1, uy - 2]) {                                 // upper 이전 중 가장 늦은 해
+          const c = Date.UTC(y, mo - 1, d, h - 9, mi), k = new Date(c + 9 * 3600 * 1000);
+          if (k.getUTCMonth() !== mo - 1 || k.getUTCDate() !== d) continue;     // 없는 날짜(평년 2/29)
+          if (c <= upper) { t = c; break; }
+        }
+      }
+    }
+    if (isNaN(t)) t = upper - 36 * 3600 * 1000;                                // 날짜를 못 읽으면 다음 문자 시각으로 간주
+    items[i] = { name: "log.txt", text: chunks[i], mtime: new Date(t).toISOString() };
+    upper = t + 36 * 3600 * 1000;
+  }
+  return items;
+}
+
 // 파일명 yyyyMMdd-HHmmss(-난수).txt 는 기기 로컬(KST) 시각
 function isoFromName(name) {
   const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
@@ -168,4 +200,4 @@ function aggregate(items, nowIso, adjust = {}) {
   return { ym, info, sum, unparsed, dup, rows };
 }
 
-if (typeof module !== "undefined") module.exports = { FX_USD_KRW, CARDS, bodyDateIso, nextTarget, normalizeIso, daysInMonth, prevYm, monthInfo, aggregate, classify, parseFile, ymKST, isoFromName };
+if (typeof module !== "undefined") module.exports = { FX_USD_KRW, CARDS, bodyDateIso, splitLog, logItems, nextTarget, normalizeIso, daysInMonth, prevYm, monthInfo, aggregate, classify, parseFile, ymKST, isoFromName };

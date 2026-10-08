@@ -4,6 +4,6 @@ let core = fs.readFileSync("scriptable/ledger-core.js", "utf8").replace(/\nif \(
 let w = fs.readFileSync("scriptable/CardWidget.js", "utf8")
   .replace('const core = importModule("ledger-core");\n', "");
 w = w.replace(/^\/\/ Scriptable 위젯[\s\S]*?\n(?=const fm)/, "");
-const out = core + "\nconst core = { CARDS, nextTarget, aggregate, monthInfo, prevYm };\n" + w;
+const out = core + "\nconst core = { CARDS, nextTarget, aggregate, monthInfo, prevYm, logItems };\n" + w;
 fs.writeFileSync("scriptable/CardWidget.single.js", out);
 console.log("wrote scriptable/CardWidget.single.js", out.split("\n").length, "lines");
