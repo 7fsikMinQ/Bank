@@ -211,7 +211,11 @@ const dir = fm.joinPath(root, "inbox");
 //  (3) CardLedger/log.txt  ("텍스트 파일에 추가" 동작으로 한 파일에 이어 붙인 경우)
 async function readTxtDir(d, now, okMonths, pres, items) {
   let failed = 0;
-  for (const name of fm.listContents(d).filter(n => n.endsWith(".txt"))) {
+  // 파일 이름 보정: (a) iCloud에서 아직 내려받지 않은 파일은 ".이름.icloud" 로 보이므로 실제 이름으로 바꾸고(아래에서 내려받음)
+  //                (b) "텍스트 저장"이 확장자 없이 만든 파일("텍스트" 등)도 읽는다(점이 없는 이름, 숨김 파일 제외)
+  const names = fm.listContents(d).map(n => { const m = /^\.(.+)\.icloud$/.exec(n); return m ? m[1] : n; })
+    .filter((n, i, a) => a.indexOf(n) === i && !n.startsWith(".") && (n.endsWith(".txt") || !n.includes(".")));
+  for (const name of names) {
     try {
       const p = fm.joinPath(d, name);
       let mtime = "";

@@ -2,7 +2,7 @@
 // 쓰면 아이폰에서처럼 ReferenceError("Can't find variable")로 실패한다. 허용 전역 = 실제 Scriptable API 중 우리가 쓰는 것만.
 const fs = require("fs"), path = require("path"), os = require("os"), vm = require("vm");
 
-function run({ bookmarkDir = "", logText = "", runsInWidget, withFiles = true, simple = false, file = "scriptable/CardWidget.single.js" }) {
+function run({ extraFiles = null, placeholder = null, bookmarkDir = "", logText = "", runsInWidget, withFiles = true, simple = false, file = "scriptable/CardWidget.single.js" }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cl-")); const inbox = path.join(tmp, "CardLedger/inbox");
   fs.mkdirSync(inbox, { recursive: true });
   const kst = new Date(Date.now() + 9 * 3600e3);
@@ -20,12 +20,15 @@ function run({ bookmarkDir = "", logText = "", runsInWidget, withFiles = true, s
     fs.writeFileSync(path.join(tmp, "CardLedger/adjust.json"), '{"sh": 12000}');
     fs.writeFileSync(path.join(inbox, "199001-old.txt"), "x\ny\nz");
   }
+  const pending = {};
+  if (extraFiles) for (const [n, c] of Object.entries(extraFiles)) fs.writeFileSync(path.join(inbox, n), c);        // 예: "텍스트"(확장자 없음)
+  if (placeholder) { fs.writeFileSync(path.join(inbox, "." + placeholder.name + ".icloud"), ""); pending[path.join(inbox, placeholder.name)] = placeholder.text; }  // 아직 내려받지 않은 iCloud 파일
   const bookmarks = bookmarkDir ? { ShortcutsFolder: bookmarkDir } : {};
   if (logText) fs.writeFileSync(path.join(tmp, "CardLedger/log.txt"), logText);
   const rows = [], diag = [];
   const mk = () => ({ addText: t => { rows.push(t); return { font: 0, textColor: 0, lineLimit: 0 }; }, addStack() { return mk(); }, addSpacer() {}, centerAlignContent() {} });
   const fm = { documentsDirectory: () => tmp, joinPath: path.join, fileExists: fs.existsSync, listContents: p => fs.readdirSync(p),
-    isFileDownloaded: () => true, downloadFileFromiCloud: async () => {}, readString: p => fs.readFileSync(p, "utf8"),
+    isFileDownloaded: p => !Object.keys(pending).includes(p) || fs.existsSync(p), downloadFileFromiCloud: async p => { if (pending[p]) fs.writeFileSync(p, pending[p]); }, readString: p => fs.readFileSync(p, "utf8"),
     modificationDate: p => fs.statSync(p).mtime, creationDate: p => fs.statSync(p).birthtime,
     bookmarkExists: n => !!bookmarks[n], bookmarkedPath: n => bookmarks[n], writeString: (p, s) => fs.writeFileSync(p, s) };
   const sandbox = {
