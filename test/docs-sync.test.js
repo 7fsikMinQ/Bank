@@ -8,4 +8,13 @@ const docs = ["README.md", "docs/초보자-따라하기-가이드.md", "docs/카
 const stale = [/임시 30만/, /신한·우리다모아의 실적 구간/, /메시지에 포함\*\* 칸에 `승인`/, /"비씨"와 "신용"이 \*\*둘 다\*\* 나오는지/, /confirmed: false/, /Widget\.reloadUserWidgets/, /BC바로=문자 본문에 "비씨/];
 for (const [f, t] of docs) for (const re of stale) assert.ok(!re.test(t), `${f}: 옛 표현 남음 ${re}`);
 for (const [f, t] of docs) for (const must of ["1,320", "10만"]) if (f !== "README.md") assert.ok(t.includes(must) || t.includes(must.replace(",", "")), `${f}: '${must}' 설명 없음`);
+// 확정 규칙 일관성: 모든 문서에 4개 보낸 번호(+82 형태)와 목표가 같게 적혀 있어야 한다
+const NUMS = ["+82 1588-4000", "+82 1577-6200", "+82 1544-7200", "+82 1588-9955"];
+for (const f of ["README.md", "docs/초보자-따라하기-가이드.md", "docs/카드실적-위젯-설계서.md"]) {
+  const t = fs.readFileSync(f, "utf8").replace(/```javascript[\s\S]*?```/g, "");
+  for (const n of NUMS) assert.ok(t.includes(n), `${f}: 보낸 번호 '${n}' 없음`);
+  assert.ok(!/(?<!\+82 )1588-4000|(?<!\+82 )1577-6200/.test(t), `${f}: +82 없는 BC/현대 번호 표기 남음`);
+}
+const core = fs.readFileSync("scriptable/CardWidget.single.js", "utf8");
+for (const must of ["tiers: [300000, 600000]", "tiers: [400000]", "tiers: [100000]", "noTarget: true", "FX_USD_KRW = 1320"]) assert.ok(core.includes(must), `코드에 확정 규칙 '${must}' 없음`);
 console.log("DOCS SYNC OK (부록 코드 일치, 옛 표현 없음)");
