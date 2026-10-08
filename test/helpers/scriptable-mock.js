@@ -10,11 +10,11 @@ function run({ runsInWidget, withFiles = true, simple = false, file = "scriptabl
   const iso = new Date().toISOString();
   if (withFiles) {
     fs.writeFileSync(path.join(inbox, `${pre}01-101010-1111.txt`), `비씨\n${iso}\n비씨 신용 승인 350,000원 일시불 누적 350,000원`);
-    fs.writeFileSync(path.join(inbox, `${pre}02-101010-2222.txt`), `현대카드\n${iso}\n현대카드 승인 100,000원`);
-    fs.writeFileSync(path.join(inbox, `${pre}02-101010-3333.txt`), `현대카드\n${iso}\n현대카드 승인취소 20,000원`);
+    fs.writeFileSync(path.join(inbox, `${pre}02-101010-2222.txt`), `현대카드\n${iso}\n현대 네이버 승인 100,000원`);
+    fs.writeFileSync(path.join(inbox, `${pre}02-101010-3333.txt`), `현대카드\n${iso}\n현대 네이버 취소 20,000원`);
     if (simple) { // 간단 모드: 문자 원문만 저장된 파일(이름은 단축어가 붙인 "Text.txt", "Text 1.txt")
       fs.writeFileSync(path.join(inbox, "Text.txt"), "[Web발신]\n비씨 신용 승인 1,000원 일시불 편의점 누적 1,000원");
-      fs.writeFileSync(path.join(inbox, "Text 1.txt"), "현대카드 승인 5,000원");
+      fs.writeFileSync(path.join(inbox, "Text 1.txt"), "현대 네이버 승인 5,000원");
     }
     fs.writeFileSync(path.join(tmp, "CardLedger/adjust.json"), '{"sh": 12000}');
     fs.writeFileSync(path.join(inbox, "199001-old.txt"), "x\ny\nz");

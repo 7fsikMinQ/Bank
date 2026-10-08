@@ -2,14 +2,21 @@
 // ※ 문자 형식은 "가정"이다. 실제 문자 샘플로 match/exclude/패턴을 반드시 보정할 것.
 
 // tiers: 혜택 구간(원, 오름차순). confirmed:false = 조사로 확인 못 한 임시값 → 위젯에 "?"
-// match 는 "발신번호 + 문자 앞부분(HEAD_LEN자)"에만 적용 → 가맹점명(현대백화점 등) 오분류 방지
+// match 는 "문자 머리말(승인/취소/결제/이용 글자 앞, 최대 HEAD_LEN자)"에만 적용 → 가맹점명(현대백화점 등) 오분류 방지
+// ※ 규칙은 사용자 아이폰의 실제 카드 문자(2026-10-08)로 확인:
+//   BC바로  : "BC바로(끝4자리) 승인" / "BC바로(…)승인취소"
+//   우리    : "우리카드(…)체크승인" / "우리카드(…) 승인" / "우리카드(…)승인취소"
+//   현대ED3 : "현대 네이버 승인" / "현대 네이버 취소"      ← "현대카드" 글자가 없음
+//   신한    : "신한카드(…)승인 …" / "신한카드(…)취소 …"     ← 취소 문자에 "승인" 글자가 없음
 const CARDS = [
-  // BC 바로: 문자 머리말에 "비씨(또는 BC)"와 "신용"이 둘 다 있어야 한다 (순서·띄어쓰기 무관)
-  { id: "bc", name: "BC바로KPASS", match: /^(?=[\s\S]*(?:비씨|BC))(?=[\s\S]*신용)/, tiers: [300000, 600000], confirmed: true, exclude: [] },
-  { id: "hd", name: "현대ED3",     match: /현대카드/, tiers: [400000], confirmed: true, exclude: [] },
-  { id: "sh", name: "신한",        match: /신한/,     tiers: [300000], confirmed: false, exclude: [] },
-  // 우리다모아: "우리" 가 있거나, "비씨(BC) 체크" 로 표기되는 경우
-  { id: "wr", name: "우리다모아",  match: /우리|(?:비씨|BC)\s*체크/, tiers: [300000], confirmed: false,
+  // BC 바로: "BC바로" (실제 문자) 또는 "비씨/BC" + "신용" 이 둘 다 있는 표기(대체 표기)
+  { id: "bc", name: "BC바로KPASS", match: /BC\s*바로|^(?=[\s\S]*(?:비씨|BC))(?=[\s\S]*신용)/, tiers: [300000, 600000], confirmed: true, exclude: [] }, // 태그 없음: BC 계열 번호는 본문으로 구분
+  // 네이버 현대카드 ED3: "현대 네이버" (실제 문자). 다른 현대카드는 세지 않는다
+  { id: "hd", name: "현대ED3",     tag: /^현대(?:카드)?$/, match: /현대\s*네이버|네이버\s*현대/, tiers: [400000], confirmed: true, exclude: [] },
+  // 신한카드: "신한카드", "신한해외"(달러 결제는 금액을 못 읽어 ⚠︎). 다른 카드인 "신한체크"는 제외
+  { id: "sh", name: "신한",        tag: /^신한(?:카드)?$/, match: /신한(?!체크)/, tiers: [300000], confirmed: false, exclude: [] },
+  // 우리다모아: "우리" (실제 문자: 우리카드(…)체크승인) 또는 "비씨(BC) 체크" 표기
+  { id: "wr", name: "우리다모아",  tag: /^우리(?:카드)?$/, match: /우리|(?:비씨|BC)\s*체크/, tiers: [300000], confirmed: false,
     exclude: [/관리비|국세|지방세|공과금|상품권|선불|교통카드|충전/] },
 ];
 const HEAD_LEN = 30;
@@ -23,6 +30,9 @@ const CUMUL_G = new RegExp(CUMUL.source, "g");
 // 잔액/한도/포인트 금액은 승인금액이 아니다
 const NOISE_G = /(?:잔액|한도|잔여|가용|포인트|적립|누적)\s*:?\s*[0-9][0-9,]*\s*원?/g;
 const AMOUNT = /([0-9][0-9,]*)\s*원/;
+// 해외 달러 결제: 문자에 "원" 금액이 없고 달러만 있으면 아래 고정 환율로 원화 환산한다 (예: 22.00 달러 × 1320 = 29,040원)
+const FX_USD_KRW = 1320;   // ← 환율을 바꾸려면 이 숫자만 수정
+const USD = /([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:달러|USD)|(?:USD|\$)\s*([0-9][0-9,]*(?:\.[0-9]+)?)/i;
 
 function nextTarget(card, v) {
   return card.tiers.find(t => v < t) ?? card.tiers[card.tiers.length - 1];
@@ -61,7 +71,7 @@ function classify(rec) {
   let hits = CARDS.filter(c => c.match.test(head));
   // 2순위: 머리말에 카드 표시가 전혀 없을 때만 단축어가 1행에 적은 태그를 참고
   if (hits.length === 0) {
-    const tagHits = CARDS.filter(c => c.match.test(rec.sender));
+    const tagHits = CARDS.filter(c => c.tag && c.tag.test(rec.sender.trim()));
     if (tagHits.length === 1) hits = tagHits;
   }
   if (hits.length === 0) return { status: "nocard" };
@@ -69,11 +79,17 @@ function classify(rec) {
   const card = hits[0];
   const clean = rec.body.replace(CUMUL_G, " ").replace(NOISE_G, " ");
   const m = AMOUNT.exec(clean);
-  if (!m) return { status: "noamount", card };
-  let amt = parseInt(m[1].replace(/,/g, ""), 10);
+  let amt, fx = false;
+  if (m) amt = parseInt(m[1].replace(/,/g, ""), 10);
+  else {
+    const u = USD.exec(clean);                       // 원 금액이 없을 때만 달러 환산
+    if (!u) return { status: "noamount", card };     // 엔·유로 등 다른 통화는 계산하지 않고 ⚠︎
+    amt = Math.round(parseFloat((u[1] || u[2]).replace(/,/g, "")) * FX_USD_KRW);
+    fx = true;
+  }
   if (card.exclude.some(re => re.test(rec.body))) return { status: "excluded", card };
   if (CANCEL.test(rec.body)) amt = -amt;
-  return { status: "ok", card, amt };
+  return { status: "ok", card, amt, fx };
 }
 
 // ── 날짜 규칙 ─────────────────────────────────────────────────────────────
@@ -115,7 +131,7 @@ function aggregate(items, nowIso, adjust = {}) {
     if (lastSeen.has(key) && t - lastSeen.get(key) < 60000) { dup++; rows.push({ rec, status: "dup" }); continue; }
     lastSeen.set(key, t);
     const r = classify(rec);
-    rows.push({ rec, status: r.status, card: r.card, amt: r.amt });
+    rows.push({ rec, status: r.status, card: r.card, amt: r.amt, fx: r.fx });
     if (r.status === "ok") {
       sum[r.card.id] += r.amt;
       const cm = CUMUL.exec(rec.body);
@@ -124,7 +140,10 @@ function aggregate(items, nowIso, adjust = {}) {
       }
     } else if (r.status === "noamount" || r.status === "ambiguous") unparsed++;
   }
-  for (const [id, v] of Object.entries(adjust || {}))
+  // adjust: {"2026-10": {"bc": 1111000}} 처럼 달을 지정하면 그 달에만 적용, {"bc": 1000} 처럼 쓰면 매달 적용
+  const flat = {}, scoped = (adjust && typeof adjust[ym] === "object" && adjust[ym]) || {};
+  for (const [k, v] of Object.entries(adjust || {})) if (typeof v === "number") flat[k] = v;
+  for (const [id, v] of Object.entries({ ...flat, ...scoped }))
     if (id in sum && typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_ADJUST) sum[id] += v;
   return { ym, info, sum, cum, unparsed, dup, rows };
 }
@@ -177,7 +196,7 @@ async function showDiag(cards, rows) {
   const label = { ok: "OK", nocard: "카드 못 찾음", noamount: "금액 못 찾음", ambiguous: "카드 모호", excluded: "제외", dup: "중복", baddate: "날짜 오류" };
   for (const r of rows.slice(-30).reverse()) {
     const row = new UITableRow(); row.height = 56;
-    const amt = r.amt === undefined ? "" : (r.amt < 0 ? "−" : "+") + Math.abs(r.amt).toLocaleString() + "원";
+    const amt = r.amt === undefined ? "" : (r.amt < 0 ? "−" : "+") + Math.abs(r.amt).toLocaleString() + "원" + (r.fx ? " (달러 환산)" : "");
     row.addText(`${label[r.status] || r.status} ${r.card ? r.card.name : ""} ${amt}`, r.rec.body.replace(/\s+/g, " ").slice(0, 60));
     t.addRow(row);
   }

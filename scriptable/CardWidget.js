@@ -47,7 +47,7 @@ async function showDiag(cards, rows) {
   const label = { ok: "OK", nocard: "카드 못 찾음", noamount: "금액 못 찾음", ambiguous: "카드 모호", excluded: "제외", dup: "중복", baddate: "날짜 오류" };
   for (const r of rows.slice(-30).reverse()) {
     const row = new UITableRow(); row.height = 56;
-    const amt = r.amt === undefined ? "" : (r.amt < 0 ? "−" : "+") + Math.abs(r.amt).toLocaleString() + "원";
+    const amt = r.amt === undefined ? "" : (r.amt < 0 ? "−" : "+") + Math.abs(r.amt).toLocaleString() + "원" + (r.fx ? " (달러 환산)" : "");
     row.addText(`${label[r.status] || r.status} ${r.card ? r.card.name : ""} ${amt}`, r.rec.body.replace(/\s+/g, " ").slice(0, 60));
     t.addRow(row);
   }
