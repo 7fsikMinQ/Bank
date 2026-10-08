@@ -316,7 +316,7 @@ try {
     t.textColor = ok ? Color.green() : Color.red();
     w.addSpacer(2);
   }
-  const foot = w.addText(`${info.day}/${info.days}일차 · 갱신 ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`);
+  const foot = w.addText(`${info.month}월 ${info.day}일 현재 · 갱신 ${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}`);
   foot.font = Font.systemFont(FS - 4); foot.textColor = Color.gray();
 } catch (e) {
   const t = w.addText("오류: " + e.message + (e.line ? " (줄 " + e.line + ":" + e.column + ")" : "")); t.font = Font.systemFont(11); t.textColor = Color.red();
