@@ -23,8 +23,16 @@ BC 바로 / 네이버 현대 ED3 / 신한 / 우리다모아의 **이번 달 사�
 
 - 문자 저장 위치 3가지 지원: `CardLedger/inbox`, 연결 폴더(`ShortcutsFolder`), `CardLedger/log.txt`(이어 붙이기)
 
+## 동작 한눈에
+문자 도착 → 단축어 자동화가 `iCloud Drive/Scriptable/CardLedger/inbox`에 원문 파일 저장 → `CardWidget`이 이번 달 파일을 읽어 카드 4개 합계 표시.
+- 홈 위젯 갱신 시점은 iOS가 정함(수십 분~수 시간). **위젯을 탭하면** 앱에서 실행되어 진단표와 최신 계산 결과를 바로 볼 수 있음.
+- 글자 크기: 코드의 `const FS = 15;` 숫자만 변경(13~16 권장).
+- 붙여넣을 때 **번역 기능을 끌 것**(변수 `best`가 `최고`로 바뀌면 `Can't find variable: 최고` 오류). 폰에서 `CardCheck`로 원본과 같은지 검사 가능.
+- 오류가 나면 빨간 글씨에 `(줄 N:M)`이 표시됨.
+
 ## 파일
 - `scriptable/CardWidget.single.js` : **아이폰 Scriptable에 붙여넣는 완성본** (생성물, 직접 수정 금지)
+- `scriptable/CardCheck.js` : 폰에 붙여넣은 `CardWidget`이 원본과 같은지 검사하는 보조 스크립트(읽기 전용)
 - `scriptable/ledger-core.js`, `scriptable/CardWidget.js` : 소스 → `npm run build` 로 단일 파일 생성
 - `test/`, `scripts/` : `npm test` → 4개 시간대에서 전체 테스트(실제 문자·월 경계·퍼즈·보안·위젯 모의 실행·문서 동기화)
 
